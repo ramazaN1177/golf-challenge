@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Golf Challenge</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #1a1a2e;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <!-- PixiJS v8 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.min.js"></script>
+    <!-- Matter.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+
+    <script>
+        (async () => {
+            // ===============================
+            // 1. PixiJS KURULUMU
+            // ===============================
+            const app = new PIXI.Application();
+
+            await app.init({
+                width: window.innerWidth,
+                height: window.innerHeight,
+                backgroundColor: 0x16213e,
+                antialias: false,
+                resolution: window.devicePixelRatio || 1,
+                autoDensity: true,
+            });
+
+            document.body.appendChild(app.canvas);
+
+            // Oyun dünyası container (kamera için)
+            const worldContainer = new PIXI.Container();
+            app.stage.addChild(worldContainer);
+
+            // ===============================
+            // 2. MATTER.JS FİZİK DÜNYASI
+            // ===============================
+            const Engine = Matter.Engine;
+            const World = Matter.World;
+            const Bodies = Matter.Bodies;
+            const Body = Matter.Body;
+
+            // Fizik motoru oluştur
+            const engine = Engine.create({
+                gravity: { x: 0, y: 1.5 }  // Yerçekimi (golf için biraz güçlü)
+            });
+
+            const world = engine.world;
+
+            // ===============================
+            // 3. GOLF TOPU
+            // ===============================
+            const BALL_RADIUS = 12;
+            const BALL_START_X = 150;
+            const BALL_START_Y = 200;
+
+            // Fizik cismi
+            const ballBody = Bodies.circle(BALL_START_X, BALL_START_Y, BALL_RADIUS, {
+                restitution: 0.5,       // Sekme oranı
+                friction: 0.3,          // Sürtünme
+                frictionAir: 0.01,      // Hava direnci
+                density: 0.002,         // Yoğunluk
+                label: 'ball'
+            });
+            World.add(world, ballBody);
+
+            // PixiJS grafiği — golf topu
+            const ballGraphics = new PIXI.Graphics();
+            // Dış çember (beyaz)
+            ballGraphics.circle(0, 0, BALL_RADIUS);
+            ballGraphics.fill(0xffffff);
+            // İç detay (golf topu deseni)
+            ballGraphics.circle(-3, -3, 2);
+            ballGraphics.fill(0xdddddd);
+            ballGraphics.circle(4, -2, 2);
+            ballGraphics.fill(0xdddddd);
+            ballGraphics.circle(0, 4, 2);
+            ballGraphics.fill(0xdddddd);
+            worldContainer.addChild(ballGraphics);
+
+            // ===============================
+            // 4. ZEMİN VE DUVARLAR
+            // ===============================
+            const screenW = app.screen.width;
+            const screenH = app.screen.height;
+
+            // Zemin parçaları — basit bir seviye düzeni
+            const grounds = [
+                // Ana zemin (geniş platform)
+                { x: 400, y: screenH - 50, w: 800, h: 20, angle: 0, color: 0x2ecc71 },
+                // Rampa (hafif eğimli)
+                { x: 900, y: screenH - 100, w: 300, h: 20, angle: -0.15, color: 0x27ae60 },
+                // Üst platform
+                { x: 1300, y: screenH - 150, w: 400, h: 20, angle: 0, color: 0x2ecc71 },
+            ];
+
+            const groundBodies = [];
+            const groundGraphics = [];
+
+            grounds.forEach(g => {
+                // Fizik cismi (statik)
+                const body = Bodies.rectangle(g.x, g.y, g.w, g.h, {
+                    isStatic: true,
+                    friction: 0.6,
+                    restitution: 0.3,
+                    angle: g.angle,
+                    label: 'ground'
+                });
+                World.add(world, body);
+                groundBodies.push(body);
+
+                // PixiJS grafiği
+                const gfx = new PIXI.Graphics();
+                gfx.rect(-g.w / 2, -g.h / 2, g.w, g.h);
+                gfx.fill(g.color);
+                // Üst kenar çizgisi (çim efekti)
+                gfx.rect(-g.w / 2, -g.h / 2, g.w, 3);
+                gfx.fill(0x55efc4);
+                gfx.x = g.x;
+                gfx.y = g.y;
+                gfx.rotation = g.angle;
+                worldContainer.addChild(gfx);
+                groundGraphics.push(gfx);
+            });
+
+            // Görünmez duvarlar (sol ve alt sınır)
+            const walls = [
+                Bodies.rectangle(-10, screenH / 2, 20, screenH * 2, { isStatic: true, label: 'wall' }),   // Sol duvar
+                Bodies.rectangle(0, screenH + 100, 5000, 20, { isStatic: true, label: 'killzone' }),       // Alt ölüm zonu
+            ];
+            World.add(world, walls);
+
+            // ===============================
+            // 5. ARKA PLAN DEKORU
+            // ===============================
+            // Basit gökyüzü gradyanı
+            const sky = new PIXI.Graphics();
+            sky.rect(0, 0, 3000, screenH);
+            sky.fill(0x16213e);
+            worldContainer.addChildAt(sky, 0);
+
+            // Yıldızlar
+            for (let i = 0; i < 50; i++) {
+                const star = new PIXI.Graphics();
+                star.circle(0, 0, Math.random() * 2 + 0.5);
+                star.fill(0xffffff);
+                star.alpha = Math.random() * 0.5 + 0.3;
+                star.x = Math.random() * 3000;
+                star.y = Math.random() * (screenH - 100);
+                worldContainer.addChildAt(star, 1);
+            }
+
+            // ===============================
+            // 6. HUD (Skor, Atış Sayısı)
+            // ===============================
+            const hudContainer = new PIXI.Container();
+            app.stage.addChild(hudContainer);  // HUD, stage'e eklenir (kameradan bağımsız)
+
+            const strokeText = new PIXI.Text({
+                text: 'Atış: 0',
+                style: {
+                    fontFamily: 'Arial',
+                    fontSize: 20,
+                    fill: 0xffffff,
+                    fontWeight: 'bold',
+                }
+            });
+            strokeText.x = 15;
+            strokeText.y = 15;
+            hudContainer.addChild(strokeText);
+
+            const statusText = new PIXI.Text({
+                text: '🏌️ Golf Challenge',
+                style: {
+                    fontFamily: 'Arial',
+                    fontSize: 16,
+                    fill: 0x888888,
+                }
+            });
+            statusText.anchor.set(1, 0);
+            statusText.x = screenW - 15;
+            statusText.y = 15;
+            hudContainer.addChild(statusText);
+
+            // ===============================
+            // 7. GAME LOOP
+            // ===============================
+            const FIXED_TIMESTEP = 1000 / 60;  // 60 FPS fizik
+
+            app.ticker.add((ticker) => {
+                // Fizik güncelleme
+                Engine.update(engine, FIXED_TIMESTEP);
+
+                // Golf topu senkronizasyonu (fizik → grafik)
+                ballGraphics.x = ballBody.position.x;
+                ballGraphics.y = ballBody.position.y;
+                ballGraphics.rotation = ballBody.angle;
+
+                // Kamera takibi (top merkezli, yumuşak geçiş)
+                const targetX = -ballBody.position.x + screenW / 3;
+                const targetY = -ballBody.position.y + screenH / 2;
+
+                // Lerp (yumuşak kamera geçişi)
+                worldContainer.x += (targetX - worldContainer.x) * 0.08;
+                worldContainer.y += (targetY - worldContainer.y) * 0.08;
+
+                // Kamera sınırları
+                worldContainer.x = Math.min(0, worldContainer.x);  // Sola gitmesin
+                worldContainer.y = Math.min(0, worldContainer.y);  // Yukarı gitmesin
+
+                // Top ekran dışına düştü mü? (ölüm zonu)
+                if (ballBody.position.y > screenH + 50) {
+                    // Topu başlangıca geri getir
+                    Body.setPosition(ballBody, { x: BALL_START_X, y: BALL_START_Y });
+                    Body.setVelocity(ballBody, { x: 0, y: 0 });
+                    Body.setAngularVelocity(ballBody, 0);
+                }
+            });
+
+            // ===============================
+            // 8. NATIVE BRIDGE
+            // ===============================
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'GAME_READY',
+                    message: 'PixiJS + Matter.js initialized'
+                }));
+            }
+
+            console.log('✅ PixiJS + Matter.js başlatıldı');
+        })();
+    </script>
+</body>
+</html>
