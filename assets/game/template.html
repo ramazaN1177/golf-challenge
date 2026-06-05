@@ -1,0 +1,1422 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Level 2 - Golf Challenge</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; overflow: hidden; }
+        html, body { width: 100%; height: 100%; background: #07071a; touch-action: none; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <!-- PixiJS v8 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.min.js"></script>
+    <!-- Matter.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+
+    <script>
+    (async () => {
+        // ==========================================
+        // 1. NATIVE BRIDGE
+        // ==========================================
+        function postToNative(type, payload = {}) {
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({ type, ...payload }));
+                return true;
+            }
+            return false;
+        }
+
+        // ==========================================
+        // 2. GELİŞMİŞ SES SENTEZLEYİCİ
+        // ==========================================
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+        function getAudio() {
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            return audioCtx;
+        }
+
+        // Gürültü tamponu oluştur (bir kez)
+        let _noiseBuffer = null;
+        function getNoiseBuffer() {
+            if (_noiseBuffer) return _noiseBuffer;
+            const ctx = getAudio();
+            const len = ctx.sampleRate * 2;
+            _noiseBuffer = ctx.createBuffer(1, len, ctx.sampleRate);
+            const d = _noiseBuffer.getChannelData(0);
+            for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+            return _noiseBuffer;
+        }
+
+        function makeGain(ctx, val, t0, rampTo, rampDur) {
+            const g = ctx.createGain();
+            g.gain.setValueAtTime(val, t0 || ctx.currentTime);
+            if (rampTo !== undefined) g.gain.exponentialRampToValueAtTime(Math.max(rampTo, 0.0001), (t0 || ctx.currentTime) + rampDur);
+            return g;
+        }
+        function makeOsc(ctx, type, freq, t0, freqEnd, freqDur) {
+            const o = ctx.createOscillator();
+            o.type = type;
+            o.frequency.setValueAtTime(freq, t0 || ctx.currentTime);
+            if (freqEnd !== undefined) o.frequency.exponentialRampToValueAtTime(Math.max(freqEnd, 1), (t0 || ctx.currentTime) + freqDur);
+            return o;
+        }
+        function makeFilter(ctx, type, freq, q) {
+            const f = ctx.createBiquadFilter();
+            f.type = type; f.frequency.value = freq;
+            if (q !== undefined) f.Q.value = q;
+            return f;
+        }
+
+        // ---- Atış sesi: PROFESYONEL GOLF VURUŞU ----
+        function playShootSound(power) {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                // CLICK — golf klübü metal çarpış tonu (kısa, keskin)
+                const clickLen = Math.floor(ctx.sampleRate * 0.008);
+                const clickBuf = ctx.createBuffer(1, clickLen, ctx.sampleRate);
+                const clickD = clickBuf.getChannelData(0);
+                for (let i = 0; i < clickLen; i++) {
+                    const env = Math.pow(1 - i / clickLen, 4);
+                    clickD[i] = (Math.random() * 2 - 1) * env;
+                }
+                const clickSrc = ctx.createBufferSource(); clickSrc.buffer = clickBuf;
+                const clickFilt = makeFilter(ctx, 'bandpass', 3500 + power * 2000, 4);
+                const clickG = makeGain(ctx, 0.7 + power * 0.3, t);
+                clickSrc.connect(clickFilt); clickFilt.connect(clickG); clickG.connect(ctx.destination);
+                clickSrc.start(t);
+
+                // BODY — rezonant top tümbe gövdesi
+                const body1 = makeOsc(ctx, 'sine', 220 + power * 180, t, 55, 0.18);
+                const bodyG1 = makeGain(ctx, 0.28 + power * 0.18, t, 0.001, 0.18);
+                body1.connect(bodyG1); bodyG1.connect(ctx.destination);
+                body1.start(t); body1.stop(t + 0.2);
+
+                // OVERTONE — parlak harmonik
+                const body2 = makeOsc(ctx, 'triangle', 440 + power * 360, t, 110, 0.12);
+                const bodyG2 = makeGain(ctx, 0.12 + power * 0.08, t, 0.001, 0.12);
+                body2.connect(bodyG2); bodyG2.connect(ctx.destination);
+                body2.start(t); body2.stop(t + 0.14);
+
+                // SWOOSH — hava süzlüşü (hıza göre)
+                if (power > 0.25) {
+                    const sweep = ctx.createBufferSource(); sweep.buffer = getNoiseBuffer();
+                    const sweepHpf = makeFilter(ctx, 'highpass', 800 + power * 1500, 1.2);
+                    const sweepLpf = makeFilter(ctx, 'lowpass', 5000 - power * 1000, 0.6);
+                    const sweepG = makeGain(ctx, power * 0.16, t, 0.0001, 0.3);
+                    sweep.connect(sweepHpf); sweepHpf.connect(sweepLpf); sweepLpf.connect(sweepG); sweepG.connect(ctx.destination);
+                    sweep.start(t); sweep.stop(t + 0.32);
+                }
+
+                // RING — metal rezonans kuyruğu
+                const ring = makeOsc(ctx, 'sine', 1800 + power * 600, t, 800, 0.15);
+                const ringFilt = makeFilter(ctx, 'highpass', 1200, 6);
+                const ringG = makeGain(ctx, power * 0.06, t, 0.0001, 0.22);
+                ring.connect(ringFilt); ringFilt.connect(ringG); ringG.connect(ctx.destination);
+                ring.start(t); ring.stop(t + 0.25);
+            } catch(e) {}
+        }
+
+        // ---- Normal çarpışma: tık + rezonans ----
+        function playBounceSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                // Darbe kliği
+                const buf = ctx.createBuffer(1, 512, ctx.sampleRate);
+                const d = buf.getChannelData(0);
+                for (let i = 0; i < 512; i++) d[i] = (Math.random()*2-1) * Math.exp(-i/40);
+                const src = ctx.createBufferSource(); src.buffer = buf;
+                const g = makeGain(ctx, 0.35, t, 0.001, 0.05);
+                src.connect(g); g.connect(ctx.destination); src.start(t);
+                // Rezonans tonu
+                const osc = makeOsc(ctx, 'sine', 220, t, 55, 0.18);
+                const og = makeGain(ctx, 0.12, t, 0.001, 0.18);
+                osc.connect(og); og.connect(ctx.destination);
+                osc.start(t); osc.stop(t + 0.18);
+            } catch(e) {}
+        }
+
+        // ---- Zıplayan platform: boing + overtone ----
+        function playBouncyHit() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                const osc1 = makeOsc(ctx, 'sine', 180, t, 580, 0.25);
+                const og1 = makeGain(ctx, 0.18, t, 0.001, 0.25);
+                osc1.connect(og1); og1.connect(ctx.destination);
+                osc1.start(t); osc1.stop(t + 0.28);
+                const osc2 = makeOsc(ctx, 'triangle', 360, t+0.03, 1100, 0.22);
+                const og2 = makeGain(ctx, 0.08, t+0.03, 0.001, 0.22);
+                osc2.connect(og2); og2.connect(ctx.destination);
+                osc2.start(t+0.03); osc2.stop(t + 0.28);
+            } catch(e) {}
+        }
+
+        // ---- Buz: kristal ping + yüksek frekans ----
+        function playIcyHit() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                const osc = makeOsc(ctx, 'sine', 1800, t, 3200, 0.04);
+                const og = makeGain(ctx, 0.07, t, 0.001, 0.3);
+                const filt = makeFilter(ctx, 'highpass', 800, 5);
+                osc.connect(filt); filt.connect(og); og.connect(ctx.destination);
+                osc.start(t); osc.stop(t + 0.35);
+                // Kayan ses (glide)
+                const osc2 = makeOsc(ctx, 'triangle', 2400, t+0.02, 900, 0.28);
+                const og2 = makeGain(ctx, 0.04, t+0.02, 0.001, 0.28);
+                osc2.connect(og2); og2.connect(ctx.destination);
+                osc2.start(t+0.02); osc2.stop(t + 0.32);
+            } catch(e) {}
+        }
+
+        // ---- Yapışkan: thud + düşük basın ----
+        function playStickyHit() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                const osc = makeOsc(ctx, 'sine', 70, t, 35, 0.3);
+                const og = makeGain(ctx, 0.25, t, 0.001, 0.3);
+                const lpf = makeFilter(ctx, 'lowpass', 200, 1);
+                osc.connect(lpf); lpf.connect(og); og.connect(ctx.destination);
+                osc.start(t); osc.stop(t + 0.35);
+                // Tıkırtı transient
+                const buf = ctx.createBuffer(1, 256, ctx.sampleRate);
+                const d = buf.getChannelData(0);
+                for (let i = 0; i < 256; i++) d[i] = (Math.random()*2-1) * Math.exp(-i/20);
+                const src = ctx.createBufferSource(); src.buffer = buf;
+                const g2 = makeGain(ctx, 0.3, t);
+                src.connect(g2); g2.connect(ctx.destination); src.start(t);
+            } catch(e) {}
+        }
+
+        // ---- Kırılma: çarpışma gürültüsü + parçalanma ----
+        function playBreakSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                const noise = ctx.createBufferSource();
+                noise.buffer = getNoiseBuffer();
+                const bpf1 = makeFilter(ctx, 'bandpass', 800, 3);
+                const bpf2 = makeFilter(ctx, 'bandpass', 200, 2);
+                const merger = ctx.createGain();
+                noise.connect(bpf1); bpf1.connect(merger);
+                const noise2 = ctx.createBufferSource();
+                noise2.buffer = getNoiseBuffer();
+                noise2.connect(bpf2); bpf2.connect(merger);
+                const g = makeGain(ctx, 0.5, t, 0.001, 0.35);
+                merger.connect(g); g.connect(ctx.destination);
+                noise.start(t); noise.stop(t + 0.35);
+                noise2.start(t); noise2.stop(t + 0.35);
+                // Çarpışma tonu
+                const osc = makeOsc(ctx, 'sawtooth', 120, t, 40, 0.2);
+                const og = makeGain(ctx, 0.15, t, 0.001, 0.2);
+                osc.connect(og); og.connect(ctx.destination);
+                osc.start(t); osc.stop(t + 0.25);
+            } catch(e) {}
+        }
+
+        // ---- EKRAN SALLAMA ----
+        function screenShake(intensity, duration) {
+            const canvas = document.querySelector('canvas');
+            if (!canvas) return;
+            const steps = Math.ceil(duration / 16);
+            let step = 0;
+            const shake = setInterval(() => {
+                const decay = 1 - step / steps;
+                const dx = (Math.random() - 0.5) * intensity * decay * 2;
+                const dy = (Math.random() - 0.5) * intensity * decay * 2;
+                canvas.style.transform = `translate(${dx}px, ${dy}px)`;
+                step++;
+                if (step >= steps) {
+                    clearInterval(shake);
+                    canvas.style.transform = '';
+                }
+            }, 16);
+        }
+
+        // ---- Su splash: GERCEKCI su sesi ----
+        function playSplashSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                // KATARACT — güçlü su düşüş gürültüsü
+                const fall = ctx.createBufferSource(); fall.buffer = getNoiseBuffer();
+                const fLpf = makeFilter(ctx, 'lowpass', 1200, 0.4);
+                const fHpf = makeFilter(ctx, 'highpass', 50, 0.8);
+                const fG = makeGain(ctx, 0.75, t, 0.0001, 0.8);
+                fall.connect(fHpf); fHpf.connect(fLpf); fLpf.connect(fG); fG.connect(ctx.destination);
+                fall.start(t); fall.stop(t + 0.85);
+                // THUD — su kütlesi darbesi
+                const thud = makeOsc(ctx, 'sine', 55, t, 22, 0.35);
+                const thudLpf = makeFilter(ctx, 'lowpass', 180, 1.5);
+                const thudG = makeGain(ctx, 0.6, t, 0.001, 0.35);
+                thud.connect(thudLpf); thudLpf.connect(thudG); thudG.connect(ctx.destination);
+                thud.start(t); thud.stop(t + 0.4);
+                // MID HIT — orta frekan su darbesi
+                const mid = makeOsc(ctx, 'sine', 180, t, 60, 0.25);
+                const midG = makeGain(ctx, 0.35, t, 0.001, 0.28);
+                mid.connect(midG); midG.connect(ctx.destination);
+                mid.start(t); mid.stop(t + 0.3);
+                // BUBBLE SEQUENCE — gerçekçi köpük dizisi
+                const bubFreqs = [420, 680, 320, 550, 780, 290, 480];
+                bubFreqs.forEach((freq, i) => {
+                    const dt = t + 0.04 + i * 0.07 + Math.random() * 0.04;
+                    const bub = makeOsc(ctx, 'sine', freq, dt, freq * 0.3, 0.1 + Math.random() * 0.06);
+                    const bG = makeGain(ctx, 0.08 - i * 0.006, dt, 0.001, 0.12);
+                    bub.connect(bG); bG.connect(ctx.destination);
+                    bub.start(dt); bub.stop(dt + 0.15);
+                });
+                // HISS — su yüzeyine çıkış sesi
+                const hiss = ctx.createBufferSource(); hiss.buffer = getNoiseBuffer();
+                const hHpf = makeFilter(ctx, 'highpass', 2000, 0.5);
+                const hG = makeGain(ctx, 0.12, t + 0.12, 0.001, 0.65);
+                hiss.connect(hHpf); hHpf.connect(hG); hG.connect(ctx.destination);
+                hiss.start(t + 0.12); hiss.stop(t + 0.85);
+            } catch(e) {}
+        }
+
+        // ---- Checkpoint: FM çan sesi ----
+        function playCheckpointSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                const notes = [523.25, 659.25, 783.99];
+                notes.forEach((freq, i) => {
+                    const dt = t + i * 0.12;
+                    // Carrier
+                    const car = makeOsc(ctx, 'sine', freq, dt);
+                    // Modulator (FM)
+                    const mod = makeOsc(ctx, 'sine', freq * 2.76, dt);
+                    const modG = ctx.createGain();
+                    modG.gain.setValueAtTime(freq * 1.5, dt);
+                    modG.gain.exponentialRampToValueAtTime(freq * 0.1, dt + 0.4);
+                    mod.connect(modG); modG.connect(car.frequency);
+                    const cg = makeGain(ctx, 0.12, dt, 0.001, 0.45);
+                    car.connect(cg); cg.connect(ctx.destination);
+                    car.start(dt); car.stop(dt + 0.5);
+                    mod.start(dt); mod.stop(dt + 0.5);
+                });
+            } catch(e) {}
+        }
+
+        // ---- Düşme: "yoo" komik + dramatik dönüş sesi ----
+        function playFallSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                // Komik dönüş pitch düşüşü ("yoooo" etkisi)
+                const osc = makeOsc(ctx, 'triangle', 500, t, 80, 0.55);
+                const og = makeGain(ctx, 0.18, t, 0.001, 0.6);
+                const vib = ctx.createOscillator();
+                vib.frequency.value = 8; vib.type = 'sine';
+                const vibG = ctx.createGain(); vibG.gain.value = 30;
+                vib.connect(vibG); vibG.connect(osc.frequency);
+                osc.connect(og); og.connect(ctx.destination);
+                vib.start(t); vib.stop(t + 0.6);
+                osc.start(t); osc.stop(t + 0.65);
+                // Düşüş rüzgarı
+                const noise = ctx.createBufferSource(); noise.buffer = getNoiseBuffer();
+                const hpf = makeFilter(ctx, 'highpass', 400, 0.6);
+                const lpf = makeFilter(ctx, 'lowpass', 2000, 0.6);
+                const ng = makeGain(ctx, 0.07, t, 0.001, 0.5);
+                noise.connect(hpf); hpf.connect(lpf); lpf.connect(ng); ng.connect(ctx.destination);
+                noise.start(t); noise.stop(t + 0.6);
+                // Toparlanma tonu
+                const recover = makeOsc(ctx, 'sine', 350, t + 0.45, 150, 0.25);
+                const recG = makeGain(ctx, 0.06, t + 0.45, 0.001, 0.25);
+                recover.connect(recG); recG.connect(ctx.destination);
+                recover.start(t + 0.45); recover.stop(t + 0.72);
+            } catch(e) {}
+        }
+
+        // ---- Kazanma: tam armonik jingle ----
+        function playWinSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                // Ana melodi
+                const melody = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+                const dur =    [0.18,   0.18,   0.18,   0.22,   0.45];
+                let dt = t;
+                melody.forEach((freq, i) => {
+                    const osc = makeOsc(ctx, 'sine', freq, dt);
+                    const og = makeGain(ctx, 0.13, dt, 0.001, dur[i]);
+                    osc.connect(og); og.connect(ctx.destination);
+                    osc.start(dt); osc.stop(dt + dur[i] + 0.05);
+                    // Harmonik
+                    const h = makeOsc(ctx, 'triangle', freq * 1.5, dt);
+                    const hg = makeGain(ctx, 0.04, dt, 0.001, dur[i]);
+                    h.connect(hg); hg.connect(ctx.destination);
+                    h.start(dt); h.stop(dt + dur[i] + 0.05);
+                    dt += dur[i] * 0.8;
+                });
+                // Tiz sparkle
+                setTimeout(() => {
+                    const sp = makeOsc(ctx, 'sine', 2093, ctx.currentTime);
+                    const sg = makeGain(ctx, 0.06, ctx.currentTime, 0.001, 0.4);
+                    sp.connect(sg); sg.connect(ctx.destination);
+                    sp.start(); sp.stop(ctx.currentTime + 0.45);
+                }, 400);
+            } catch(e) {}
+        }
+
+        // ---- Çökme sesi: titreşen gürültü ----
+        function playCrumbleSound() {
+            try {
+                const ctx = getAudio();
+                const t = ctx.currentTime;
+                const noise = ctx.createBufferSource();
+                noise.buffer = getNoiseBuffer();
+                const bpf = makeFilter(ctx, 'bandpass', 180 + Math.random() * 120, 3);
+                const g = makeGain(ctx, 0.12, t, 0.001, 0.18);
+                noise.connect(bpf); bpf.connect(g); g.connect(ctx.destination);
+                noise.start(t); noise.stop(t + 0.2);
+                const osc = makeOsc(ctx, 'sawtooth', 90, t, 50, 0.15);
+                const og = makeGain(ctx, 0.07, t, 0.001, 0.15);
+                osc.connect(og); og.connect(ctx.destination);
+                osc.start(t); osc.stop(t + 0.18);
+            } catch(e) {}
+        }
+
+        // ==========================================
+        // 3. PIXI BAŞLATMA
+        // ==========================================
+        const app = new PIXI.Application();
+        await app.init({
+            width: window.innerWidth,
+            height: window.innerHeight,
+            backgroundColor: 0x07071a,
+            antialias: true,
+            resolution: window.devicePixelRatio || 1,
+            autoDensity: true,
+        });
+        document.body.appendChild(app.canvas);
+
+        const screenW = app.screen.width;
+        const screenH = app.screen.height;
+
+        const worldContainer = new PIXI.Container();
+        app.stage.addChild(worldContainer);
+
+        // ==========================================
+        // 4. ARKA PLAN — Yıldız Alanı + Grid
+        // ==========================================
+        const LEVEL_HEIGHT = 2200; // levelData'dan override edilecek
+
+        // Siber grid
+        function makeCyberGridTexture(w, h) {
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#07071a';
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = 'rgba(0,242,254,0.04)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= w; x += 48) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            }
+            for (let y = 0; y <= h; y += 48) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+            return PIXI.Texture.from(canvas);
+        }
+
+        const gridTex = makeCyberGridTexture(512, 512);
+        const gridBg = new PIXI.TilingSprite({ texture: gridTex, width: screenW + 200, height: screenH + LEVEL_HEIGHT + 200 });
+        gridBg.x = -100; gridBg.y = -(LEVEL_HEIGHT + 100);
+        worldContainer.addChild(gridBg);
+
+        // Derin arka plan degrade
+        function makeGradientBg() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 4; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, 512);
+            grad.addColorStop(0, '#0d0d2b');
+            grad.addColorStop(1, '#07071a');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 4, 512);
+            return PIXI.Texture.from(canvas);
+        }
+        const gradBg = new PIXI.TilingSprite({ texture: makeGradientBg(), width: screenW, height: screenH + LEVEL_HEIGHT });
+        gradBg.y = -LEVEL_HEIGHT;
+        worldContainer.addChildAt(gradBg, 0);
+
+        // Yıldızlar
+        const starsGfx = new PIXI.Graphics();
+        worldContainer.addChild(starsGfx);
+        const STARS = Array.from({ length: 120 }, () => ({
+            x: Math.random() * screenW,
+            y: -(Math.random() * LEVEL_HEIGHT + screenH),
+            r: Math.random() * 1.5 + 0.3,
+            alpha: Math.random() * 0.7 + 0.3,
+            flicker: Math.random() * Math.PI * 2,
+        }));
+
+        // Neon arka plan küreleri (parallax)
+        const orbGfx = new PIXI.Graphics();
+        worldContainer.addChild(orbGfx);
+        const ORBS = [
+            { x: screenW * 0.15, y: -LEVEL_HEIGHT * 0.3, r: 90, color: 0x00f2fe, alpha: 0.05 },
+            { x: screenW * 0.8, y: -LEVEL_HEIGHT * 0.6, r: 120, color: 0xdb2777, alpha: 0.04 },
+            { x: screenW * 0.4, y: -LEVEL_HEIGHT * 0.85, r: 70, color: 0x7d5fff, alpha: 0.06 },
+        ];
+
+        // ==========================================
+        // 5. MATTER.JS FİZİK
+        // ==========================================
+        const { Engine, World, Bodies, Body, Events } = Matter;
+        const engine = Engine.create({ gravity: { x: 0, y: 1.8 } });
+        const world = engine.world;
+
+        const BALL_RADIUS = 12;
+        let BALL_START_X = 100, BALL_START_Y = 1950;
+        let lastCheckpoint = { x: BALL_START_X, y: BALL_START_Y };
+
+        const ballBody = Bodies.circle(BALL_START_X, BALL_START_Y, BALL_RADIUS, {
+            restitution: 0.45,
+            friction: 0.35,
+            frictionAir: 0.012,
+            density: 0.002,
+            label: 'ball'
+        });
+        World.add(world, ballBody);
+
+        // ==========================================
+        // 6. TOP GRAFİĞİ — Golf Topu
+        // ==========================================
+        const ballContainer = new PIXI.Container();
+        worldContainer.addChild(ballContainer);
+
+        const ballGlowGfx = new PIXI.Graphics();
+        ballGlowGfx.circle(0, 0, BALL_RADIUS + 5);
+        ballGlowGfx.fill({ color: 0xffffff, alpha: 0.08 });
+        ballContainer.addChild(ballGlowGfx);
+
+        const ballBodyGfx = new PIXI.Graphics();
+        // Golf topu zemini
+        ballBodyGfx.circle(0, 0, BALL_RADIUS);
+        ballBodyGfx.fill({ color: 0xfafafa });
+        // Golf topu çukurları (dimples) — desen
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+            const dx = Math.cos(angle) * BALL_RADIUS * 0.5;
+            const dy = Math.sin(angle) * BALL_RADIUS * 0.5;
+            ballBodyGfx.circle(dx, dy, 2.2);
+            ballBodyGfx.fill({ color: 0xe0e0e0, alpha: 0.6 });
+        }
+        // Kenarlık
+        ballBodyGfx.circle(0, 0, BALL_RADIUS);
+        ballBodyGfx.stroke({ width: 1.5, color: 0x00f2fe, alpha: 0.9 });
+        ballContainer.addChild(ballBodyGfx);
+
+        // Parlama (highlight)
+        const ballHighlight = new PIXI.Graphics();
+        ballHighlight.ellipse(-BALL_RADIUS * 0.3, -BALL_RADIUS * 0.35, BALL_RADIUS * 0.4, BALL_RADIUS * 0.25);
+        ballHighlight.fill({ color: 0xffffff, alpha: 0.75 });
+        ballContainer.addChild(ballHighlight);
+
+        // Gölge
+        const ballShadow = new PIXI.Graphics();
+        ballShadow.ellipse(0, 0, BALL_RADIUS * 0.85, 2.5);
+        ballShadow.fill({ color: 0x000000, alpha: 0.4 });
+        worldContainer.addChildAt(ballShadow, worldContainer.getChildIndex(ballContainer));
+
+        // Trail
+        const trailGfx = new PIXI.Graphics();
+        worldContainer.addChildAt(trailGfx, worldContainer.getChildIndex(ballContainer));
+        const trailParticles = [];
+
+        // ==========================================
+        // 7. SEVİYE VERİSİ
+        // ==========================================
+        const levelData = {
+          "levelNumber": 2,
+          "levelHeight": 2200,
+          "ballStart": { "x": 100, "y": 1950 },
+          "portal": { "x": 180, "y": 420 },
+          "water": { "x": 250, "y": 1950, "w": 200, "h": 60 },
+          "grounds": [
+            { "x": 100, "y": 1950, "w": 80, "h": 24, "type": "normal", "isCheckpoint": true, "checkpointActivated": true },
+            { "x": 200, "y": 1992, "w": 200, "h": 24, "type": "normal" },
+            { "x": 300, "y": 1920, "w": 40, "h": 120, "type": "normal" },
+            { "x": 80, "y": 1780, "w": 90, "h": 24, "type": "sticky" },
+            { "x": 220, "y": 1620, "w": 75, "h": 24, "type": "bouncy" },
+            { "x": 120, "y": 1460, "w": 90, "h": 24, "type": "crumbling" },
+            { "x": 260, "y": 1300, "w": 100, "h": 24, "type": "normal", "isCheckpoint": true },
+            { "x": 90, "y": 1140, "w": 105, "h": 24, "type": "icy" },
+            { "x": 230, "y": 980, "w": 85, "h": 24, "type": "bouncy" },
+            { "x": 120, "y": 820, "w": 90, "h": 24, "type": "crumbling" },
+            { "x": 180, "y": 660, "w": 30, "h": 100, "type": "breakable" },
+            { "x": 180, "y": 480, "w": 100, "h": 24, "type": "normal", "isCheckpoint": true }
+          ]
+        };
+
+        // ==========================================
+        // 8. PLATFORM RENK PALETİ
+        // ==========================================
+        const PLATFORM_COLORS = {
+            normal:    { fill: 0x0d1425, stroke: 0x00f2fe, glow: 0x00f2fe },
+            bouncy:    { fill: 0x1a0a18, stroke: 0xff2d55, glow: 0xff2d55 },
+            sticky:    { fill: 0x120a1a, stroke: 0x7d5fff, glow: 0x7d5fff },
+            icy:       { fill: 0x0a1420, stroke: 0x70d0ff, glow: 0x70d0ff },
+            crumbling: { fill: 0x1a1000, stroke: 0xffa502, glow: 0xffa502 },
+            breakable: { fill: 0x1a0808, stroke: 0xff4757, glow: 0xff4757 },
+        };
+
+        // ==========================================
+        // 9. PLATFORM ÇİZİM FONKSİYONLARI
+        // ==========================================
+        const groundBodies = [];
+        const groundGraphics = [];
+        const particles = [];
+        const fadingGfx = [];
+        const activeCrumblingBodies = new Set();
+        let groundContactCount = 0;
+        let ballOnGround = false;
+        let waterBody = null, waterGfx = null;
+
+        function drawPlatform(gfx, body, overrideDecay = null) {
+            const { type, w, h, isCheckpoint, checkpointActivated, decay, compression, glow: glowVal, isBroken } = body.customData;
+            if (isBroken) return;
+
+            const colors = PLATFORM_COLORS[type] || PLATFORM_COLORS.normal;
+            const cr = 7; // corner radius
+
+            gfx.clear();
+
+            // Crumbling progress
+            const progress = overrideDecay !== null ? overrideDecay : (type === 'crumbling' ? Math.min(decay / 120, 1) : 0);
+
+            // Compression offset for bouncy
+            const compY = type === 'bouncy' ? (compression || 0) * 5 : 0;
+            const compH = type === 'bouncy' ? h - compY : h;
+
+            // Glow halo (outer)
+            const glowAmt = (glowVal || 0);
+            if (glowAmt > 0) {
+                gfx.roundRect(-w / 2 - glowAmt * 3, -h / 2 - glowAmt * 3, w + glowAmt * 6, h + glowAmt * 6, cr + 3);
+                gfx.fill({ color: colors.glow, alpha: glowAmt * 0.25 });
+            }
+
+            // Platform body
+            gfx.roundRect(-w / 2, -h / 2 + compY, w, compH, cr);
+            gfx.fill({ color: colors.fill, alpha: 0.9 });
+            gfx.roundRect(-w / 2, -h / 2 + compY, w, compH, cr);
+            gfx.stroke({ width: 2 + glowAmt * 1.5, color: colors.stroke, alpha: 0.85 + progress * 0.15 });
+
+            // Tür-spesifik detaylar
+            if (type === 'bouncy') {
+                // Yay çizgileri
+                for (let i = 0; i < 3; i++) {
+                    const bx = -w * 0.3 + i * w * 0.3;
+                    gfx.moveTo(bx, -h / 2 + compY + 3);
+                    gfx.lineTo(bx, h / 2);
+                    gfx.stroke({ width: 1.5, color: colors.stroke, alpha: 0.5 });
+                }
+            } else if (type === 'sticky') {
+                // Yapışkan noktalar
+                for (let i = -1; i <= 1; i++) {
+                    gfx.circle(i * w * 0.3, 0, 3.5);
+                    gfx.fill({ color: colors.stroke, alpha: 0.7 });
+                }
+                // Dalgalı üst çizgi
+                gfx.moveTo(-w / 2, -h / 2 + 4);
+                for (let px = -w / 2; px <= w / 2; px += 8) {
+                    gfx.lineTo(px, -h / 2 + 4 + Math.sin(px * 0.4) * 3);
+                }
+                gfx.stroke({ width: 1, color: colors.stroke, alpha: 0.35 });
+            } else if (type === 'icy') {
+                // Buz kristal çizgileri
+                gfx.moveTo(-w / 3, -h / 2 + 2);
+                gfx.lineTo(-w / 6, h / 2 - 2);
+                gfx.moveTo(w / 6, -h / 2 + 2);
+                gfx.lineTo(w / 3, h / 2 - 2);
+                gfx.stroke({ width: 1, color: 0xffffff, alpha: 0.3 });
+                // Buz parlaması
+                gfx.moveTo(-w / 2 + 4, -h / 2 + 3);
+                gfx.lineTo(-w / 2 + 14, -h / 2 + 3);
+                gfx.stroke({ width: 2, color: 0xffffff, alpha: 0.5 });
+            } else if (type === 'breakable') {
+                // Çarpı işareti
+                gfx.moveTo(-8, -6); gfx.lineTo(8, 6);
+                gfx.moveTo(8, -6); gfx.lineTo(-8, 6);
+                gfx.stroke({ width: 2, color: colors.stroke, alpha: 0.7 });
+            } else if (type === 'crumbling' && progress > 0) {
+                // Çatlaklar
+                const cx = -w / 3, cy = -h / 3;
+                gfx.moveTo(cx, cy);
+                gfx.lineTo(cx + w / 6 * progress, 0);
+                gfx.lineTo(cx + w / 4 * progress, h / 3 * progress);
+                gfx.stroke({ width: 1.5, color: colors.stroke, alpha: Math.min(progress * 1.5, 1) });
+                if (progress > 0.5) {
+                    gfx.moveTo(w / 4, -h / 4);
+                    gfx.lineTo(w / 6, h / 5);
+                    gfx.stroke({ width: 1, color: colors.stroke, alpha: progress - 0.5 });
+                }
+            }
+
+            // Checkpoint bayrağı
+            if (isCheckpoint) {
+                const bColor = checkpointActivated ? 0x2ecc71 : 0xff4757;
+                const bx = -w / 2 + 14;
+                // Direk
+                gfx.moveTo(bx, -h / 2);
+                gfx.lineTo(bx, -h / 2 - 20);
+                gfx.stroke({ width: 2, color: 0xffffff, alpha: 0.8 });
+                // Bayrak
+                gfx.poly([bx, -h / 2 - 20, bx + 12, -h / 2 - 16, bx, -h / 2 - 12]);
+                gfx.fill({ color: bColor });
+                if (checkpointActivated) {
+                    // Activated halo
+                    gfx.circle(bx, -h / 2 - 16, 8);
+                    gfx.fill({ color: bColor, alpha: 0.2 });
+                }
+            }
+        }
+
+        function createGround(g) {
+            let friction = 0.55, restitution = 0.3;
+            if (g.type === 'bouncy') { friction = 0.4; restitution = 0.95; }
+            else if (g.type === 'sticky') { friction = 2.0; restitution = 0.0; }
+            else if (g.type === 'icy') { friction = 0.001; restitution = 0.1; }
+
+            const body = Bodies.rectangle(g.x, g.y, g.w, g.h, {
+                isStatic: true, friction, restitution,
+                angle: g.angle || 0,
+                label: 'ground_' + g.type
+            });
+
+            body.customData = {
+                type: g.type, w: g.w, h: g.h,
+                decay: 0, isBroken: false, compression: 0, glow: 0,
+                isCheckpoint: g.isCheckpoint || false,
+                checkpointActivated: g.checkpointActivated || false
+            };
+
+            World.add(world, body);
+            groundBodies.push(body);
+
+            const gfx = new PIXI.Graphics();
+            body.customData.gfx = gfx;
+            drawPlatform(gfx, body);
+            gfx.x = g.x; gfx.y = g.y; gfx.rotation = g.angle || 0;
+            worldContainer.addChild(gfx);
+            groundGraphics.push(gfx);
+            return body;
+        }
+
+        function breakPlatform(body) {
+            if (body.customData.isBroken) return;
+            body.customData.isBroken = true;
+            spawnParticles(body.position.x, body.position.y, PLATFORM_COLORS[body.customData.type]?.glow || 0xff4757, 22);
+            World.remove(world, body);
+            playBreakSound();
+            const gfx = body.customData.gfx;
+            fadingGfx.push({
+                gfx, alpha: 1,
+                update() {
+                    this.alpha -= 0.06;
+                    this.gfx.alpha = this.alpha;
+                    this.gfx.scale.set(1 - (1 - this.alpha) * 0.3);
+                    return this.alpha <= 0;
+                }
+            });
+        }
+
+        // ==========================================
+        // 10. HEDEF — Golf Deliği (Hole + Bayrak)
+        // ==========================================
+        let PORTAL_X = levelData.portal.x;
+        let PORTAL_Y = levelData.portal.y;
+        const PORTAL_RADIUS = 28;
+
+        const portalBody = Bodies.circle(PORTAL_X, PORTAL_Y, PORTAL_RADIUS, {
+            isStatic: true, isSensor: true, label: 'portal'
+        });
+        World.add(world, portalBody);
+
+        const holeContainer = new PIXI.Container();
+        holeContainer.x = PORTAL_X; holeContainer.y = PORTAL_Y;
+        worldContainer.addChild(holeContainer);
+
+        // Delik (hole)
+        const holeGfx = new PIXI.Graphics();
+        holeGfx.ellipse(0, 8, PORTAL_RADIUS - 2, 7);
+        holeGfx.fill({ color: 0x000000 });
+        holeGfx.ellipse(0, 8, PORTAL_RADIUS - 2, 7);
+        holeGfx.stroke({ width: 2, color: 0x333333 });
+        holeContainer.addChild(holeGfx);
+
+        // Bayrak direği
+        const flagpoleGfx = new PIXI.Graphics();
+        flagpoleGfx.moveTo(0, -8); flagpoleGfx.lineTo(0, -PORTAL_RADIUS - 20);
+        flagpoleGfx.stroke({ width: 2.5, color: 0xffffff, alpha: 0.9 });
+        holeContainer.addChild(flagpoleGfx);
+
+        // Bayrak dalgalanıyor
+        const flagGfx = new PIXI.Graphics();
+        holeContainer.addChild(flagGfx);
+
+        function drawFlag(time) {
+            flagGfx.clear();
+            const wave = Math.sin(time * 3) * 4;
+            const wave2 = Math.sin(time * 3 + 1) * 2;
+            const top = -PORTAL_RADIUS - 18;
+            flagGfx.poly([
+                0, top,
+                14 + wave, top + 6 + wave2,
+                0, top + 12
+            ]);
+            flagGfx.fill({ color: 0xff2d55 });
+            flagGfx.stroke({ width: 1, color: 0xff6b88, alpha: 0.8 });
+        }
+
+        // Delik etrafı glow halkası
+        const holeGlowGfx = new PIXI.Graphics();
+        holeContainer.addChildAt(holeGlowGfx, 0);
+
+        function drawHoleGlow(time) {
+            holeGlowGfx.clear();
+            const pulse = 1 + Math.sin(time * 2.5) * 0.15;
+            holeGlowGfx.ellipse(0, 8, (PORTAL_RADIUS + 8) * pulse, 9 * pulse);
+            holeGlowGfx.fill({ color: 0xffd700, alpha: 0.12 + Math.sin(time * 2.5) * 0.05 });
+        }
+
+        // ==========================================
+        // 11. PARTİKÜLLER
+        // ==========================================
+        function spawnParticles(x, y, color, count = 14, velocityScale = 1) {
+            for (let i = 0; i < count; i++) {
+                const p = new PIXI.Graphics();
+                const size = Math.random() * 5 + 1.5;
+                const isSquare = Math.random() < 0.4;
+                if (isSquare) {
+                    p.rect(-size / 2, -size / 2, size, size);
+                } else {
+                    p.circle(0, 0, size / 2);
+                }
+                p.fill({ color });
+                p.x = x + (Math.random() - 0.5) * 30;
+                p.y = y + (Math.random() - 0.5) * 15;
+                worldContainer.addChild(p);
+                particles.push({
+                    gfx: p,
+                    vx: (Math.random() - 0.5) * 5 * velocityScale,
+                    vy: (Math.random() - 1.6) * 5 * velocityScale,
+                    alpha: 1,
+                    decay: Math.random() * 0.025 + 0.015,
+                    rot: (Math.random() - 0.5) * 0.2,
+                });
+            }
+        }
+
+        // Su efekti partikülleri
+        function spawnSplash(x, y) {
+            for (let i = 0; i < 10; i++) {
+                const p = new PIXI.Graphics();
+                p.circle(0, 0, Math.random() * 3 + 1);
+                p.fill({ color: 0x00f2fe, alpha: 0.8 });
+                p.x = x + (Math.random() - 0.5) * 30;
+                p.y = y;
+                worldContainer.addChild(p);
+                particles.push({
+                    gfx: p,
+                    vx: (Math.random() - 0.5) * 3,
+                    vy: -(Math.random() * 4 + 1),
+                    alpha: 0.8,
+                    decay: 0.035,
+                    rot: 0,
+                });
+            }
+        }
+
+        // ==========================================
+        // 12. SEVİYE YÜKLEME
+        // ==========================================
+        const walls = [];
+        let winSequenceActive = false;
+        let ballScale = 1.0;
+        let levelCompleted = false;
+        let strokeCount = 0;
+
+        let currentLevelHeight = 2000;
+        function loadLevel(data) {
+            groundBodies.forEach(b => World.remove(world, b));
+            groundGraphics.forEach(gfx => { worldContainer.removeChild(gfx); gfx.destroy(); });
+            groundBodies.length = 0;
+            groundGraphics.length = 0;
+            activeCrumblingBodies.clear();
+
+            if (waterBody) { World.remove(world, waterBody); waterBody = null; }
+            if (waterGfx) { worldContainer.removeChild(waterGfx); waterGfx.destroy(); waterGfx = null; }
+            walls.forEach(w => World.remove(world, w));
+            walls.length = 0;
+
+            const lh = data.levelHeight || 2000;
+            currentLevelHeight = lh;
+
+            // Grid boyutunu güncelle
+            gridBg.height = screenH + lh + 200;
+            gridBg.y = -(lh + 100);
+            gradBg.height = screenH + lh;
+            gradBg.y = -lh;
+
+            // Yıldızları yeniden konumlandır
+            STARS.forEach(s => { s.y = -(Math.random() * lh + screenH); });
+
+            const totalH = lh + screenH * 2;
+            const wallCenterY = lh / 2 - screenH / 2; // dünya koordinatı orta noktası
+            const leftWall = Bodies.rectangle(-10, wallCenterY, 20, totalH, { isStatic: true, label: 'wall' });
+            const rightWall = Bodies.rectangle(screenW + 10, wallCenterY, 20, totalH, { isStatic: true, label: 'wall' });
+            // Kill zone level'in altında — dünya koordinatlarında
+            const killzone = Bodies.rectangle(screenW / 2, lh + 200, 10000, 20, { isStatic: true, label: 'killzone' });
+            World.add(world, [leftWall, rightWall, killzone]);
+            walls.push(leftWall, rightWall, killzone);
+
+            BALL_START_X = data.ballStart.x;
+            BALL_START_Y = data.ballStart.y;
+            Body.setPosition(ballBody, { x: BALL_START_X, y: BALL_START_Y });
+            Body.setVelocity(ballBody, { x: 0, y: 0 });
+            Body.setAngularVelocity(ballBody, 0);
+
+            data.grounds.forEach(g => createGround(g));
+
+            if (data.water) {
+                const { x: wx, y: wy, w: ww, h: wh } = data.water;
+                waterBody = Bodies.rectangle(wx, wy, ww, wh, { isStatic: true, isSensor: true, label: 'water' });
+                World.add(world, waterBody);
+
+                waterGfx = new PIXI.Graphics();
+                const surfY = wy - wh / 2;
+
+                // Su gövdesi ana renk (koyu teal/lacivert)
+                waterGfx.rect(wx - ww / 2, surfY, ww, wh);
+                waterGfx.fill({ color: 0x001828, alpha: 0.95 });
+
+                // Orta hafifleşen katman (derinlik)
+                waterGfx.rect(wx - ww / 2, surfY, ww, wh * 0.5);
+                waterGfx.fill({ color: 0x004070, alpha: 0.45 });
+
+                // Üst parlak şerit (yüzey altı)
+                waterGfx.rect(wx - ww / 2, surfY, ww, wh * 0.18);
+                waterGfx.fill({ color: 0x0080c0, alpha: 0.35 });
+
+                // Yatay iç ışık bantları (su altı görünümü)
+                for (let b = 0; b < 4; b++) {
+                    const by = surfY + wh * 0.28 + b * wh * 0.18;
+                    waterGfx.rect(wx - ww / 2 + 10, by, ww - 20, 1.5);
+                    waterGfx.fill({ color: 0x00a0d8, alpha: 0.08 + b * 0.02 });
+                }
+
+                // Yüzey çizgi 1: ana neon çizgi
+                waterGfx.rect(wx - ww / 2, surfY, ww, 3.5);
+                waterGfx.fill({ color: 0x00e0ff, alpha: 0.95 });
+
+                // Yüzey çizgi 2: köpük/beyaz şerit
+                waterGfx.rect(wx - ww / 2, surfY + 4, ww, 2);
+                waterGfx.fill({ color: 0xffffff, alpha: 0.3 });
+
+                // Yüzey çizgi 3: ince teal şerit
+                waterGfx.rect(wx - ww / 2, surfY + 7, ww, 1);
+                waterGfx.fill({ color: 0x00c0e8, alpha: 0.2 });
+
+                // Kenar LED şeritleri
+                waterGfx.rect(wx - ww / 2, surfY, 2.5, wh);
+                waterGfx.fill({ color: 0x00e0ff, alpha: 0.65 });
+                waterGfx.rect(wx + ww / 2 - 2.5, surfY, 2.5, wh);
+                waterGfx.fill({ color: 0x00e0ff, alpha: 0.65 });
+
+                // Alt çizgi
+                waterGfx.rect(wx - ww / 2, wy + wh / 2 - 2, ww, 2);
+                waterGfx.fill({ color: 0x0060a0, alpha: 0.5 });
+
+                worldContainer.addChildAt(waterGfx, worldContainer.getChildIndex(ballContainer));
+            }
+
+
+            PORTAL_X = data.portal.x;
+            PORTAL_Y = data.portal.y;
+            Body.setPosition(portalBody, { x: PORTAL_X, y: PORTAL_Y });
+            holeContainer.x = PORTAL_X; holeContainer.y = PORTAL_Y;
+
+            winSequenceActive = false;
+            ballScale = 1.0;
+            levelCompleted = false;
+            ballContainer.scale.set(1);
+            ballContainer.alpha = 1;
+            trailParticles.length = 0;
+            groundContactCount = 0;
+            ballOnGround = false;
+            strokeCount = 0;
+            lastCheckpoint = { x: BALL_START_X, y: BALL_START_Y };
+            postToNative('DRAG_END');
+        }
+
+        window.addEventListener('message', (e) => {
+            try {
+                const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+                if (data.type === 'RESTART_LEVEL') loadLevel(levelData);
+                else if (data.type === 'LOAD_LEVEL') loadLevel(data.levelData);
+            } catch(err) { console.warn(err); }
+        });
+
+        loadLevel(levelData);
+
+        // ==========================================
+        // 13. SLINGSHOT / AIM
+        // ==========================================
+        let isDragging = false;
+        let dragStart = { x: 0, y: 0 }, dragEnd = { x: 0, y: 0 };
+        const MAX_FORCE = 0.075;
+        const MAX_DRAG = 140;
+
+        // Elastik bant grafikleri
+        const aimContainer = new PIXI.Container();
+        worldContainer.addChild(aimContainer);
+        const bandGfx = new PIXI.Graphics();
+        aimContainer.addChild(bandGfx);
+        const dotGfx = new PIXI.Graphics();
+        aimContainer.addChild(dotGfx);
+
+        function screenToWorld(sx, sy) {
+            return { x: sx - worldContainer.x, y: sy - worldContainer.y };
+        }
+
+        function isNearBall(wx, wy) {
+            const dx = wx - ballBody.position.x;
+            const dy = wy - ballBody.position.y;
+            return Math.sqrt(dx * dx + dy * dy) < 80;
+        }
+
+        function drawAim(forceX, forceY, power) {
+            bandGfx.clear();
+            dotGfx.clear();
+            if (!isDragging) return;
+
+            const bx = ballBody.position.x, by = ballBody.position.y;
+
+            // Elastik bant
+            const ox = dragStart.x - worldContainer.x;
+            const oy = dragStart.y - worldContainer.y;
+            bandGfx.moveTo(bx - 12, by);
+            bandGfx.lineTo(dragEnd.x - worldContainer.x, dragEnd.y - worldContainer.y);
+            bandGfx.lineTo(bx + 12, by);
+            bandGfx.stroke({ width: 3, color: 0xff2d55, alpha: 0.7 });
+
+            // Traj noktaları
+            const numDots = Math.floor(6 + power * 8);
+            const speedScale = 14;
+            const gravY = engine.gravity.y * 0.14;
+            let vx = (forceX / ballBody.mass) * speedScale * 60;
+            let vy = (forceY / ballBody.mass) * speedScale * 60;
+
+            for (let i = 0; i < numDots; i++) {
+                const t = (i + 1) * 0.22;
+                const dotX = bx + vx * t;
+                const dotY = by + vy * t + 0.5 * gravY * t * t * 60;
+                const progress = i / numDots;
+                const r = 3.5 - progress * 1.5;
+                const alpha = (1 - progress * 0.65) * 0.9;
+                dotGfx.circle(dotX, dotY, r);
+                dotGfx.fill({ color: 0xffffff, alpha });
+            }
+        }
+
+        function clearAim() {
+            bandGfx.clear(); dotGfx.clear();
+            postToNative('DRAG_END');
+        }
+
+        const canvas = app.canvas;
+
+        canvas.addEventListener('pointerdown', (e) => {
+            getAudio();
+            if (!ballOnGround || winSequenceActive) return;
+            const wp = screenToWorld(e.clientX, e.clientY);
+            if (isNearBall(wp.x, wp.y)) {
+                isDragging = true;
+                dragStart = { x: e.clientX, y: e.clientY };
+                dragEnd = { x: e.clientX, y: e.clientY };
+                postToNative('DRAG_START');
+            }
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!isDragging) return;
+            dragEnd = { x: e.clientX, y: e.clientY };
+            let dx = dragEnd.x - dragStart.x, dy = dragEnd.y - dragStart.y;
+            let len = Math.sqrt(dx * dx + dy * dy);
+            if (len > MAX_DRAG) {
+                const r = MAX_DRAG / len;
+                dx *= r; dy *= r; len = MAX_DRAG;
+                dragEnd.x = dragStart.x + dx;
+                dragEnd.y = dragStart.y + dy;
+            }
+            const power = Math.min(len / MAX_DRAG, 1);
+            const forceX = -(dx / Math.max(len, 1)) * MAX_FORCE * power;
+            const forceY = -(dy / Math.max(len, 1)) * MAX_FORCE * power;
+            drawAim(forceX, forceY, power);
+            postToNative('DRAG_MOVE', { power });
+        });
+
+        canvas.addEventListener('pointerup', (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            const dx = dragEnd.x - dragStart.x, dy = dragEnd.y - dragStart.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            clearAim();
+            if (len < 10) return;
+            const power = Math.min(len / MAX_DRAG, 1);
+            const forceX = -(dx / len) * MAX_FORCE * power;
+            const forceY = -(dy / len) * MAX_FORCE * power;
+            Body.applyForce(ballBody, ballBody.position, { x: forceX, y: forceY });
+            playShootSound(power);
+            strokeCount++;
+            postToNative('SHOOT', { strokeCount });
+        });
+
+        canvas.addEventListener('pointercancel', () => {
+            if (isDragging) { isDragging = false; clearAim(); }
+        });
+
+        // ==========================================
+        // 14. ÇARPIŞMA OLAYLARI
+        // ==========================================
+        function sendBallState() {
+            postToNative('BALL_STATE', { onGround: ballOnGround });
+        }
+
+        Events.on(engine, 'collisionStart', (event) => {
+            event.pairs.forEach(pair => {
+                const isBall = pair.bodyA === ballBody || pair.bodyB === ballBody;
+                if (!isBall) return;
+                const other = pair.bodyA === ballBody ? pair.bodyB : pair.bodyA;
+
+                if (other.label === 'water') {
+                    playSplashSound();
+                    screenShake(14, 380);
+                    spawnSplash(ballBody.position.x, ballBody.position.y);
+                    Body.setPosition(ballBody, { x: lastCheckpoint.x, y: lastCheckpoint.y });
+                    Body.setVelocity(ballBody, { x: 0, y: 0 });
+                    Body.setAngularVelocity(ballBody, 0);
+                    postToNative('BALL_RESET');
+                    setTimeout(() => loadLevel(levelData), 50);
+                    return;
+                }
+
+                if (other.label?.startsWith('ground_')) {
+                    groundContactCount++;
+                    if (!ballOnGround) { ballOnGround = true; sendBallState(); }
+
+                    const cd = other.customData;
+                    if (!cd) return;
+
+                    // Checkpoint aktivasyonu
+                    if (cd.isCheckpoint && !cd.checkpointActivated) {
+                        cd.checkpointActivated = true;
+                        lastCheckpoint = { x: other.position.x, y: other.position.y - cd.h / 2 - BALL_RADIUS - 6 };
+                        playCheckpointSound();
+                        spawnParticles(other.position.x, other.position.y - cd.h / 2, 0x2ecc71, 10);
+                        drawPlatform(cd.gfx, other);
+                    }
+
+                    // Bouncy
+                    if (cd.type === 'bouncy') {
+                        cd.compression = 0.6;
+                        playBouncyHit();
+                    }
+                    // Breakable — darbe sayısı
+                    if (cd.type === 'breakable') {
+                        cd.glow = 1.0;
+                        const spd = Math.hypot(ballBody.velocity.x, ballBody.velocity.y);
+                        if (spd > 3) breakPlatform(other);
+                        else {
+                            cd.hitCount = (cd.hitCount || 0) + 1;
+                            if (cd.hitCount >= 3) breakPlatform(other);
+                        }
+                    }
+                    // Crumbling
+                    if (cd.type === 'crumbling' && !cd.isBroken) {
+                        activeCrumblingBodies.add(other);
+                        playCrumbleSound();
+                    }
+                    // Ses
+                    if (cd.type === 'icy') playIcyHit();
+                    else if (cd.type === 'sticky') playStickyHit();
+                    else if (cd.type === 'normal') playBounceSound();
+                }
+            });
+        });
+
+        Events.on(engine, 'collisionEnd', (event) => {
+            event.pairs.forEach(pair => {
+                const isBall = pair.bodyA === ballBody || pair.bodyB === ballBody;
+                if (!isBall) return;
+                const other = pair.bodyA === ballBody ? pair.bodyB : pair.bodyA;
+                if (other.label?.startsWith('ground_')) {
+                    groundContactCount = Math.max(0, groundContactCount - 1);
+                    if (groundContactCount === 0 && ballOnGround) {
+                        ballOnGround = false;
+                        sendBallState();
+                    }
+                }
+                if (other.customData?.type === 'crumbling') {
+                    activeCrumblingBodies.delete(other);
+                }
+            });
+        });
+
+        // ==========================================
+        // 15. GAME LOOP
+        // ==========================================
+        let ballScaleX = 1, ballScaleY = 1;
+        const FIXED_DT = 1000 / 60;
+
+        app.ticker.add((ticker) => {
+            const time = Date.now() * 0.001;
+
+            Engine.update(engine, FIXED_DT);
+
+            // --- Yıldız animasyonu ---
+            starsGfx.clear();
+            STARS.forEach(s => {
+                const flicker = 0.6 + Math.sin(s.flicker + time * 1.5) * 0.4;
+                starsGfx.circle(s.x, s.y, s.r);
+                starsGfx.fill({ color: 0xffffff, alpha: s.alpha * flicker });
+            });
+
+            // --- Arka plan küreleri ---
+            orbGfx.clear();
+            ORBS.forEach(o => {
+                const pulse = 1 + Math.sin(time * 0.8) * 0.1;
+                orbGfx.circle(o.x, o.y, o.r * pulse);
+                orbGfx.fill({ color: o.color, alpha: o.alpha });
+            });
+
+            // --- Bayrak animasyonu ---
+            drawFlag(time);
+            drawHoleGlow(time);
+
+            // --- Su animasyonu ---
+            if (waterGfx && waterGfx._tick) waterGfx._tick(time);
+
+            // --- Deliğe giriş (portal/win) ---
+            if (!levelCompleted) {
+                const pdx = PORTAL_X - ballBody.position.x;
+                const pdy = PORTAL_Y - ballBody.position.y;
+                const pdist = Math.hypot(pdx, pdy);
+                if (pdist < 90) {
+                    const pull = 0.0003 * (1 - pdist / 90);
+                    Body.applyForce(ballBody, ballBody.position, {
+                        x: pdx / pdist * pull,
+                        y: pdy / pdist * pull,
+                    });
+                    if (pdist < 18 && !winSequenceActive) {
+                        winSequenceActive = true;
+                        levelCompleted = true;
+                        playWinSound();
+                        spawnParticles(PORTAL_X, PORTAL_Y, 0xffd700, 30, 1.5);
+                        postToNative('LEVEL_COMPLETED', { strokeCount });
+                    }
+                }
+            }
+
+            // --- Win animasyonu ---
+            if (winSequenceActive) {
+                Body.setVelocity(ballBody, {
+                    x: ballBody.velocity.x * 0.7,
+                    y: ballBody.velocity.y * 0.7,
+                });
+                Body.setPosition(ballBody, {
+                    x: ballBody.position.x + (PORTAL_X - ballBody.position.x) * 0.2,
+                    y: ballBody.position.y + (PORTAL_Y - ballBody.position.y) * 0.2,
+                });
+                if (ballScale > 0.05) {
+                    ballScale -= 0.055;
+                    ballContainer.scale.set(ballScale);
+                    if (Math.random() < 0.5) spawnParticles(ballBody.position.x, ballBody.position.y, 0xffd700, 2);
+                } else {
+                    ballScale = 0;
+                    ballContainer.alpha = 0;
+                }
+            }
+
+            // --- Top squash & stretch ---
+            const speed = Math.hypot(ballBody.velocity.x, ballBody.velocity.y);
+            ballScaleX += (1 - ballScaleX) * 0.15;
+            ballScaleY += (1 - ballScaleY) * 0.15;
+            if (!ballOnGround && speed > 2) {
+                const stretch = Math.min(speed * 0.012, 0.22);
+                ballScaleX = 1 + stretch; ballScaleY = 1 - stretch;
+                ballContainer.rotation = Math.atan2(ballBody.velocity.y, ballBody.velocity.x);
+                ballHighlight.rotation = -ballContainer.rotation;
+            } else {
+                ballContainer.rotation = 0;
+                ballHighlight.rotation = 0;
+                ballBodyGfx.rotation = ballBody.angle;
+            }
+            if (!winSequenceActive) {
+                ballContainer.scale.set(ballScaleX * ballScale, ballScaleY * ballScale);
+            }
+
+            ballContainer.x = ballBody.position.x;
+            ballContainer.y = ballBody.position.y;
+
+            // --- Top gölgesi ---
+            ballShadow.x = ballBody.position.x;
+            let shadowY = ballBody.position.y + BALL_RADIUS + 1;
+            let minDist = 999;
+            groundBodies.forEach(g => {
+                if (g.customData.isBroken) return;
+                const left = g.position.x - g.customData.w / 2;
+                const right = g.position.x + g.customData.w / 2;
+                if (ballBody.position.x >= left && ballBody.position.x <= right) {
+                    const surf = g.position.y - g.customData.h / 2;
+                    const d = surf - ballBody.position.y;
+                    if (d >= -5 && d < minDist + 250) { minDist = d; shadowY = surf; }
+                }
+            });
+            ballShadow.y = shadowY;
+            if (winSequenceActive) {
+                ballShadow.alpha = 0;
+            } else if (ballOnGround) {
+                ballShadow.alpha = 0.4;
+                ballShadow.scale.set(1);
+            } else {
+                const h = Math.max(0, minDist - BALL_RADIUS);
+                ballShadow.alpha = Math.max(0, 0.4 - h * 0.0025);
+                ballShadow.scale.set(Math.max(0.3, 1 - h * 0.005));
+            }
+
+            // --- Trail partikülleri ---
+            if (speed > 1.5 && !winSequenceActive && Math.random() < 0.8) {
+                const colors = [0x00f2fe, 0xdb2777, 0x7d5fff, 0xffffff];
+                const col = colors[Math.floor(Math.random() * colors.length)];
+                trailParticles.push({
+                    x: ballBody.position.x - (ballBody.velocity.x / speed) * BALL_RADIUS,
+                    y: ballBody.position.y - (ballBody.velocity.y / speed) * BALL_RADIUS,
+                    vx: -ballBody.velocity.x * 0.1 + (Math.random() - 0.5) * 0.5,
+                    vy: -ballBody.velocity.y * 0.1 + (Math.random() - 0.5) * 0.5 - 0.1,
+                    size: Math.random() * 3 + 1,
+                    color: col,
+                    alpha: 0.9,
+                    decay: 0.028 + Math.random() * 0.02,
+                });
+            }
+            trailGfx.clear();
+            for (let i = trailParticles.length - 1; i >= 0; i--) {
+                const tp = trailParticles[i];
+                tp.x += tp.vx; tp.y += tp.vy;
+                tp.alpha -= tp.decay;
+                if (tp.alpha <= 0) { trailParticles.splice(i, 1); continue; }
+                trailGfx.circle(tp.x, tp.y, tp.size * tp.alpha);
+                trailGfx.fill({ color: tp.color, alpha: tp.alpha });
+            }
+
+            // --- Platform animasyonları ---
+            groundBodies.forEach(body => {
+                const cd = body.customData;
+                if (!cd || cd.isBroken) return;
+
+                if (cd.type === 'bouncy' && cd.compression > 0) {
+                    cd.compression -= 0.04;
+                    if (cd.compression < 0) cd.compression = 0;
+                    drawPlatform(cd.gfx, body);
+                }
+                if (cd.type === 'breakable' && cd.glow > 0) {
+                    cd.glow -= 0.05;
+                    if (cd.glow < 0) cd.glow = 0;
+                    drawPlatform(cd.gfx, body);
+                }
+                if (cd.type === 'crumbling') {
+                    if (activeCrumblingBodies.has(body)) {
+                        cd.decay++;
+                        drawPlatform(cd.gfx, body);
+                        // Titreme
+                        if (cd.decay > 40) {
+                            const shake = (cd.decay - 40) * 0.05;
+                            cd.gfx.x = body.position.x + (Math.random() - 0.5) * shake;
+                            cd.gfx.y = body.position.y + (Math.random() - 0.5) * shake;
+                        }
+                        // Parçalanma partikülleri
+                        if (cd.decay % 6 === 0) {
+                            const px = body.position.x + (Math.random() - 0.5) * cd.w;
+                            const py = body.position.y + cd.h / 2;
+                            const p = new PIXI.Graphics();
+                            p.circle(0, 0, Math.random() * 2 + 0.8);
+                            p.fill(0xffa502);
+                            p.x = px; p.y = py;
+                            worldContainer.addChild(p);
+                            particles.push({ gfx: p, vx: (Math.random() - 0.5) * 1.2, vy: Math.random() * 1.8 + 1, alpha: 0.9, decay: 0.025, rot: 0 });
+                        }
+                        if (cd.decay >= 120) {
+                            activeCrumblingBodies.delete(body);
+                            breakPlatform(body);
+                        }
+                    } else {
+                        cd.gfx.x = body.position.x;
+                        cd.gfx.y = body.position.y;
+                    }
+                }
+            });
+
+            // --- Partiküller ---
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.gfx.x += p.vx; p.gfx.y += p.vy;
+                p.vy += 0.25;
+                p.gfx.rotation += p.rot;
+                p.alpha -= p.decay;
+                p.gfx.alpha = p.alpha;
+                if (p.alpha <= 0) {
+                    worldContainer.removeChild(p.gfx);
+                    p.gfx.destroy();
+                    particles.splice(i, 1);
+                }
+            }
+
+            // --- Solan grafikler ---
+            for (let i = fadingGfx.length - 1; i >= 0; i--) {
+                if (fadingGfx[i].update()) {
+                    worldContainer.removeChild(fadingGfx[i].gfx);
+                    fadingGfx[i].gfx.destroy();
+                    fadingGfx.splice(i, 1);
+                }
+            }
+
+            // --- Kamera ---
+            const targetY = -ballBody.position.y + screenH / 2;
+            worldContainer.x = 0;
+            worldContainer.y += (targetY - worldContainer.y) * 0.1;
+            worldContainer.y = Math.min(0, worldContainer.y);
+
+            // --- Ekrandan düşme: dünya koordinatı kullan ---
+            if (ballBody.position.y > currentLevelHeight + 450 && !winSequenceActive) {
+                screenShake(10, 350);
+                playFallSound();
+                ballContainer.alpha = 1;
+                ballScale = 1;
+                postToNative('BALL_RESET');
+                loadLevel(levelData);
+            }
+        });
+
+        // ==========================================
+        // 16. HAZIR SİNYALİ
+        // ==========================================
+        function notifyReady() {
+            if (!postToNative('GAME_READY')) setTimeout(notifyReady, 50);
+        }
+        notifyReady();
+
+    })();
+    </script>
+</body>
+</html>

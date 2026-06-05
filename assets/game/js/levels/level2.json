@@ -1,0 +1,21 @@
+{
+  "levelNumber": 2,
+  "levelHeight": 2200,
+  "ballStart": { "x": 100, "y": 1950 },
+  "portal": { "x": 180, "y": 420 },
+  "water": { "x": 250, "y": 1950, "w": 200, "h": 60 },
+  "grounds": [
+    { "x": 100, "y": 1950, "w": 80, "h": 24, "type": "normal", "isCheckpoint": true },
+    { "x": 200, "y": 1992, "w": 200, "h": 24, "type": "normal" },
+    { "x": 300, "y": 1920, "w": 40, "h": 120, "type": "normal" },
+    { "x": 80, "y": 1780, "w": 90, "h": 24, "type": "sticky" },
+    { "x": 220, "y": 1620, "w": 75, "h": 24, "type": "bouncy" },
+    { "x": 120, "y": 1460, "w": 90, "h": 24, "type": "crumbling" },
+    { "x": 260, "y": 1300, "w": 100, "h": 24, "type": "normal", "isCheckpoint": true },
+    { "x": 90, "y": 1140, "w": 105, "h": 24, "type": "icy" },
+    { "x": 230, "y": 980, "w": 85, "h": 24, "type": "bouncy" },
+    { "x": 120, "y": 820, "w": 90, "h": 24, "type": "crumbling" },
+    { "x": 180, "y": 660, "w": 30, "h": 100, "type": "breakable" },
+    { "x": 180, "y": 480, "w": 100, "h": 24, "type": "normal", "isCheckpoint": true }
+  ]
+}
